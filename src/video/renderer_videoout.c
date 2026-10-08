@@ -39,7 +39,10 @@ static int s_present_wb; /* 1 if blit writes to cacheable alias */
 static int s_ycc_hrep4;  /* 1: expand ×4; 0: NV12 packed */
 static int s_gray_left;  /* gray test frames at start */
 static int s_last_flip_idx = -1;
+static int s_prev_flip_idx = -1;
 static int s_flip_wait_logs;
+static uint64_t s_flip_stuck_since; /* 0 = not stuck; else now_us() when backlog began */
+static uint64_t s_flip_stuck_logged;
 static int s_show_stats;
 
 /*
@@ -144,7 +147,11 @@ int video_present_plugin_loaded(void) {
 }
 
 static void free_dmem(void) {
-    /* Single mapping (base); ReleaseDirectMemory is enough. */
+    /* Unmap VA before releasing physical pages; on this firmware the
+     * VA mapping may survive Release and fragment VA space over a
+     * long session. */
+    if (s_dmem_base && s_dmem_size)
+        sceKernelMunmap(s_dmem_base, s_dmem_size);
     if (s_dmem_base) {
         sceKernelReleaseDirectMemory(s_dmem_off, s_dmem_size);
         s_dmem_base = NULL;
@@ -380,6 +387,9 @@ static int switch_to_bgra(int w, int h) {
     s_use_bgra = 1;
     s_fb_index = 0;
     s_last_flip_idx = -1;
+    s_prev_flip_idx = -1;
+    s_flip_stuck_since = 0;
+    s_flip_stuck_logged = 0;
     s_flip_logged = 0;
     s_flip_wait_logs = 0;
     s_flip_mode = ML_VIDEO_OUT_FLIP_VSYNC;
@@ -886,6 +896,9 @@ int video_present_init(int w, int h, int prefer_ycbcr) {
              s_width, s_buf_h, w, h);
         s_flip_logged = 0;
         s_flip_wait_logs = 0;
+        s_prev_flip_idx = -1;
+        s_flip_stuck_since = 0;
+        s_flip_stuck_logged = 0;
         s_gray_left = 0;
         s_pipe_active = 0;
         s_pipe_fb_idx = -1;
@@ -1003,6 +1016,9 @@ int video_present_init(int w, int h, int prefer_ycbcr) {
     s_use_bgra = 0;
     s_fb_index = 0;
     s_last_flip_idx = -1;
+    s_prev_flip_idx = -1;
+    s_flip_stuck_since = 0;
+    s_flip_stuck_logged = 0;
     s_flip_logged = 0;
     s_flip_wait_logs = 0;
     s_flip_mode = ML_VIDEO_OUT_FLIP_VSYNC;
@@ -1054,6 +1070,9 @@ bgra_debug:
     s_use_bgra = 1;
     s_fb_index = 0;
     s_last_flip_idx = -1;
+    s_prev_flip_idx = -1;
+    s_flip_stuck_since = 0;
+    s_flip_stuck_logged = 0;
     s_flip_logged = 0;
     s_flip_wait_logs = 0;
     s_flip_mode = ML_VIDEO_OUT_FLIP_VSYNC;
@@ -1110,7 +1129,13 @@ static int pick_free_fb(int *out_shown) {
             int cand = (s_fb_index + 1 + i) % s_fb_count;
             if (shown >= 0 && cand == shown)
                 continue;
+            /* Exclude every in-flight flip, not just the most recent: with
+             * n=3 and pending=2 both queued buffers must be avoided.
+             * prev is only still in flight when >=2 flips are queued;
+             * with pending==1 it is already retired (shown check covers it). */
             if (st0.numFlipPending > 0 && cand == s_last_flip_idx)
+                continue;
+            if (st0.numFlipPending >= 2 && cand == s_prev_flip_idx)
                 continue;
             if (s_pipe_active && cand == s_pipe_fb_idx)
                 continue;
@@ -1218,8 +1243,11 @@ static void present_submit_flip(int next, uint8_t *dst, uint64_t convert_us) {
 
     uint64_t t1 = now_us();
     int32_t flip_rc = sceVideoOutSubmitFlip(s_video, next, (uint32_t)s_flip_mode, 0);
-    s_fb_index = next;
-    s_last_flip_idx = next;
+    if (flip_rc == 0) {
+        s_prev_flip_idx = s_last_flip_idx;
+        s_fb_index = next;
+        s_last_flip_idx = next;
+    }
 
     int shown_ok = 1;
     if (!s_use_bgra && s_fb_count > 1 && flip_rc == 0)
@@ -1253,17 +1281,50 @@ static void present_submit_flip(int next, uint8_t *dst, uint64_t convert_us) {
     (void)t1;
 }
 
-int video_present_should_drop(void) {
+/* Shared flip-queue watchdog: tracks how long the queue has been at/over
+ * threshold with currentBuffer==-1 (driver wedged). After 500 ms stuck it
+ * logs (throttled to 5 s) and lets one probe frame through so vsync can
+ * retire the queue instead of dropping forever (1 fps cliff). */
+static int flip_queue_full(int count_pipe) {
     if (s_video < 0 || s_fb_count < 1)
         return 0;
     MlVideoOutFlipStatus st;
+    memset(&st, 0, sizeof(st));
     if (sceVideoOutGetFlipStatus(s_video, &st) != 0)
         return 0;
+    int pending = st.numFlipPending;
+    if (st.numGpuFlipPending > pending)
+        pending = st.numGpuFlipPending;
+    int busy = pending + ((count_pipe && s_pipe_active) ? 1 : 0);
+    int threshold = (s_fb_count > 1) ? (s_fb_count - 1) : 1;
+    if (busy < threshold) {
+        s_flip_stuck_since = 0;
+        return 0;
+    }
+    uint64_t now = now_us();
+    if (!s_flip_stuck_since)
+        s_flip_stuck_since = now;
+    if (st.currentBuffer == -1 && now - s_flip_stuck_since > 500000ull) {
+        if (now - s_flip_stuck_logged > 5000000ull) {
+            s_flip_stuck_logged = now;
+            LOGW("present: flip queue stuck %llu ms pending=%d gpu=%d cur=%d "
+                 "-> probe frame",
+                 (unsigned long long)(now - s_flip_stuck_since) / 1000ull,
+                 st.numFlipPending, st.numGpuFlipPending, st.currentBuffer);
+        }
+        /* Probe: restart the window so we present one frame, then go back
+         * to dropping for another 500 ms if the driver is still wedged. */
+        s_flip_stuck_since = now;
+        return 0;
+    }
+    return 1;
+}
+
+int video_present_should_drop(void) {
+    if (s_video < 0 || s_fb_count < 1)
+        return 0;
     /* Active pipe occupies 1 FB in convert; counts as extra busy. */
-    int busy = st.numFlipPending + (s_pipe_active ? 1 : 0);
-    if (s_fb_count > 1)
-        return busy >= (s_fb_count - 1) ? 1 : 0;
-    return busy >= 1 ? 1 : 0;
+    return flip_queue_full(1);
 }
 
 /* Real flip backlog only (does not count the in-flight pipe convert). The
@@ -1271,14 +1332,7 @@ int video_present_should_drop(void) {
  * legitimately still running; counting it (should_drop) would skip most
  * frames in steady state. */
 int video_present_flip_backlogged(void) {
-    if (s_video < 0 || s_fb_count < 1)
-        return 0;
-    MlVideoOutFlipStatus st;
-    if (sceVideoOutGetFlipStatus(s_video, &st) != 0)
-        return 0;
-    if (s_fb_count > 1)
-        return st.numFlipPending >= s_fb_count - 1 ? 1 : 0;
-    return st.numFlipPending >= 1 ? 1 : 0;
+    return flip_queue_full(0);
 }
 
 int video_present_bgra_pipe_finish(void) {
@@ -1453,6 +1507,8 @@ static int ui_wait_backbuffer(int timeout_ms) {
                 continue;
             if (st.numFlipPending > 0 && cand == s_last_flip_idx)
                 continue;
+            if (st.numFlipPending >= 2 && cand == s_prev_flip_idx)
+                continue;
             return cand;
         }
         sceKernelUsleep(1000);
@@ -1482,6 +1538,7 @@ int video_ui_flip(int idx) {
     if (rc != 0)
         rc = sceVideoOutSubmitFlip(s_video, idx, (uint32_t)s_flip_mode, 0);
     if (rc == 0) {
+        s_prev_flip_idx = s_last_flip_idx;
         s_fb_index = idx;
         s_last_flip_idx = idx;
     }

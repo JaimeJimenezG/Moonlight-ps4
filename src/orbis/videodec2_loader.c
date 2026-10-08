@@ -47,6 +47,8 @@ static int alloc_dmem(size_t need, int32_t mem_type, void **ptr, off_t *off, siz
 }
 
 static void free_compute_mem(void) {
+    if (s_compute_mem && s_compute_size)
+        sceKernelMunmap(s_compute_mem, s_compute_size);
     if (s_compute_mem) {
         sceKernelReleaseDirectMemory(s_compute_off, s_compute_size);
         s_compute_mem = NULL;

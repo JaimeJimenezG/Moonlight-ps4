@@ -144,7 +144,10 @@ static int dr_submit(PDECODE_UNIT du) {
     if (total <= 0)
         return DR_OK;
 
-    /* Always decode; skip present only if late / flip busy. */
+    /* Always decode; skip present only if late / flip busy.
+     * Same PTS drift re-anchor as decoder_orbis: host vs local clock skew
+     * (~30-100 ppm) would otherwise trip the 33 ms threshold permanently
+     * after ~30 min (1 fps cliff). */
     int skip_present = 0;
     if (du->presentationTimeUs) {
         if (!s_have_pts_base) {
@@ -152,10 +155,27 @@ static int dr_submit(PDECODE_UNIT du) {
             s_time_base_us = now_us();
             s_have_pts_base = 1;
         } else {
+            uint64_t now = now_us();
             int64_t expected = (int64_t)s_time_base_us +
                                (int64_t)(du->presentationTimeUs - s_pts_base);
-            if ((int64_t)now_us() - expected > 33000)
+            int64_t drift = (int64_t)now - expected;
+            if (drift > 500000 || drift < -500000) {
+                /* PTS discontinuity (host timestamp jump), not clock skew:
+                 * re-anchor immediately instead of dropping until the
+                 * periodic rebase. */
+                s_pts_base = du->presentationTimeUs;
+                s_time_base_us = now;
+            } else if (drift > 80000) {
+                /* Late only; early frames still present. */
                 skip_present = 1;
+            } else if (drift > 16000 || drift < -16000) {
+                s_time_base_us =
+                    (uint64_t)((int64_t)s_time_base_us + drift / 2);
+            }
+            if (now - s_time_base_us > 300000000ull) {
+                s_pts_base = du->presentationTimeUs;
+                s_time_base_us = now;
+            }
         }
     }
 

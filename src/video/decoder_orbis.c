@@ -17,6 +17,8 @@
 #define DMEM_ALIGN ML_DMEM_ALIGN
 #define ERR_RESET_THRESHOLD 30
 #define BOUNCE_WORKERS 4
+/* Largest single H.264 AU we stage (1080p IDR at 20 Mbps fits in 4 MiB). */
+#define AU_MAX_BYTES (4u * 1024u * 1024u)
 
 static videodec2_api_t s_api;
 static OrbisVideodec2Decoder s_dec;
@@ -73,6 +75,7 @@ static int s_logged_au;
 static uint64_t s_pts_base;
 static uint64_t s_time_base_us;
 static int s_have_pts_base;
+static int s_pts_drift_logged;
 
 static uint8_t s_sps_scratch[256];
 
@@ -236,6 +239,11 @@ static int alloc_dmem(size_t need, int32_t mem_type, void **ptr, off_t *off, siz
          * memory every time a frame comes in bigger than the last. */
         need += need / 2u;
         need = (need + DMEM_ALIGN - 1) & ~(size_t)(DMEM_ALIGN - 1);
+        /* Unmap VA before releasing physical pages; on this firmware the
+         * VA mapping may survive Release and fragment VA space over a
+         * long session. */
+        if (*cap)
+            sceKernelMunmap(*ptr, *cap);
         sceKernelReleaseDirectMemory(*off, *cap);
         *ptr = NULL;
         *off = 0;
@@ -270,6 +278,8 @@ static int alloc_fb_decoder(size_t need, size_t align, int count) {
     need = (need + align - 1) & ~(align - 1);
     size_t total = need * (size_t)count;
     if (s_fb_mem) {
+        if (s_fb_size)
+            sceKernelMunmap(s_fb_mem, s_fb_size);
         sceKernelReleaseDirectMemory(s_fb_off, s_fb_size);
         s_fb_mem = NULL;
         s_fb_cpu = NULL;
@@ -359,6 +369,8 @@ static void free_all_dmem(void) {
     nv12_blit_shutdown();
     for (int i = 0; i < VD2_MAX_FB; i++) {
         if (s_au_mem[i]) {
+            if (s_au_cap[i])
+                sceKernelMunmap(s_au_mem[i], s_au_cap[i]);
             sceKernelReleaseDirectMemory(s_au_off[i], s_au_cap[i]);
             s_au_mem[i] = NULL;
             s_au_off[i] = 0;
@@ -367,6 +379,8 @@ static void free_all_dmem(void) {
     }
     s_au_i = 0;
     if (s_fb_mem) {
+        if (s_fb_size)
+            sceKernelMunmap(s_fb_mem, s_fb_size);
         sceKernelReleaseDirectMemory(s_fb_off, s_fb_size);
         s_fb_mem = NULL;
         s_fb_cpu = NULL;
@@ -379,9 +393,24 @@ static void free_all_dmem(void) {
     s_bounce[0] = s_bounce[1] = NULL;
     s_bounce_cap = 0;
     s_bounce_i = 0;
-    if (s_cpu_mem) { sceKernelReleaseDirectMemory(s_cpu_off, s_cpu_sz); s_cpu_mem = NULL; }
-    if (s_gpu_mem) { sceKernelReleaseDirectMemory(s_gpu_off, s_gpu_sz); s_gpu_mem = NULL; }
-    if (s_cpugpu_mem) { sceKernelReleaseDirectMemory(s_cpugpu_off, s_cpugpu_sz); s_cpugpu_mem = NULL; }
+    if (s_cpu_mem) {
+        if (s_cpu_sz)
+            sceKernelMunmap(s_cpu_mem, s_cpu_sz);
+        sceKernelReleaseDirectMemory(s_cpu_off, s_cpu_sz);
+        s_cpu_mem = NULL;
+    }
+    if (s_gpu_mem) {
+        if (s_gpu_sz)
+            sceKernelMunmap(s_gpu_mem, s_gpu_sz);
+        sceKernelReleaseDirectMemory(s_gpu_off, s_gpu_sz);
+        s_gpu_mem = NULL;
+    }
+    if (s_cpugpu_mem) {
+        if (s_cpugpu_sz)
+            sceKernelMunmap(s_cpugpu_mem, s_cpugpu_sz);
+        sceKernelReleaseDirectMemory(s_cpugpu_off, s_cpugpu_sz);
+        s_cpugpu_mem = NULL;
+    }
     s_cpu_off = s_gpu_off = s_cpugpu_off = 0;
     s_cpu_sz = s_gpu_sz = s_cpugpu_sz = 0;
 }
@@ -519,6 +548,7 @@ static int dr_setup(int videoFormat, int width, int height, int redrawRate,
     s_pts_base = 0;
     s_time_base_us = 0;
     s_have_pts_base = 0;
+    s_pts_drift_logged = 0;
     video_reset_stats();
     gs_sps_init(width, height);
 
@@ -613,10 +643,49 @@ static int dr_submit(PDECODE_UNIT du) {
             s_time_base_us = now_us();
             s_have_pts_base = 1;
         } else {
+            /*
+             * Host PTS clock vs PS4 ProcessTime drift ~30-100 ppm.
+             * Over 1800 s that is 54-180 ms > old 33 ms threshold, after
+             * which EVERY frame set skip_present=1 forever (1 fps cliff,
+             * restart fixes via dr_setup reset). Fix: gentle re-anchor on
+             * small drift, drop only on large (real stall); plus a hard
+             * rebase every 5 min so residual error cannot accumulate.
+             */
+            uint64_t now = now_us();
             int64_t expected = (int64_t)s_time_base_us +
                                (int64_t)(du->presentationTimeUs - s_pts_base);
-            if ((int64_t)now_us() - expected > 33000)
+            int64_t drift = (int64_t)now - expected;
+            if (drift > 500000 || drift < -500000) {
+                /* PTS discontinuity (host timestamp jump), not clock skew:
+                 * re-anchor immediately instead of dropping until the
+                 * periodic rebase. */
+                s_pts_base = du->presentationTimeUs;
+                s_time_base_us = now;
+            } else if (drift > 80000) {
+                /* Late only: frame arrived after its PTS + margin (real
+                 * stall). Early frames (drift < 0, host ahead) still
+                 * present — dropping them would cut fps for no gain. */
                 skip_present = 1;
+                /* Log once per session so the UDP log shows PTS vs
+                 * flip-queue drops. */
+                if (!s_pts_drift_logged) {
+                    s_pts_drift_logged = 1;
+                    LOGW("orbis: PTS drift %lld us (>80ms) -> skip_present; rebase in %llu ms",
+                         (long long)drift,
+                         (unsigned long long)(300000000ull -
+                                              (now - s_time_base_us)) / 1000ull);
+                }
+            } else if (drift > 16000 || drift < -16000) {
+                s_time_base_us =
+                    (uint64_t)((int64_t)s_time_base_us + drift / 2);
+            }
+            if (now - s_time_base_us > 300000000ull) {
+                LOGI("orbis: PTS rebase after %llu s (drift %lld us)",
+                     (unsigned long long)(now - s_time_base_us) / 1000000ull,
+                     (long long)drift);
+                s_pts_base = du->presentationTimeUs;
+                s_time_base_us = now;
+            }
         }
     }
 
@@ -627,6 +696,15 @@ static int dr_submit(PDECODE_UNIT du) {
 
     /* SPS fixup can slightly lengthen the NAL; keep slack. */
     size_t au_need = (size_t)total + 128;
+    /*
+     * Cap AU growth: without a cap a bitrate spike would Release+Allocate
+     * ever-larger DirectMemory (fragmenting VA); oversize AUs ask for an
+     * IDR instead.
+     */
+    if (au_need > AU_MAX_BYTES) {
+        LOGW("orbis: AU %zu > cap %u; IDR", au_need, AU_MAX_BYTES);
+        return DR_NEED_IDR;
+    }
     if (alloc_dmem(au_need, s_au_type, &s_au_mem[s_au_i], &s_au_off[s_au_i],
                    &s_au_cap[s_au_i]) < 0) {
         LOGE("orbis: AU alloc %zu failed (type=%d)", au_need, s_au_type);
