@@ -8,7 +8,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
-#include <sys/stat.h>
+#if defined(_WIN32)
+#  include <direct.h>
+#else
+#  include <sys/stat.h>
+#endif
 
 #define CERT_FILE "cert.pem"
 #define KEY_FILE "key.pem"
@@ -141,7 +145,11 @@ int identity_init(client_identity_t *id, const char *keydir) {
     }
     LOGI("identity: RNG OK");
 
+#if defined(_WIN32)
+    _mkdir(keydir);
+#else
     mkdir(keydir, 0755);
+#endif
 
     char cert_path[512], key_path[512];
     snprintf(cert_path, sizeof(cert_path), "%s/%s", keydir, CERT_FILE);

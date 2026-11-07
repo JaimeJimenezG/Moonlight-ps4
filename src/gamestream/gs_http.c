@@ -10,6 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#  define ml_strncasecmp _strnicmp
+#else
+#  define ml_strncasecmp strncasecmp
+#  include <strings.h>
+#endif
+
 #define HTTP_TIMEOUT_DEFAULT_MS 7000
 #define MAX_RESPONSE (4 * 1024 * 1024)
 
@@ -238,9 +245,9 @@ int http_get(const char *host, unsigned short port, int use_tls,
         }
         if (!strcmp(line, "\r\n") || !strcmp(line, "\n"))
             break;
-        if (!strncasecmp(line, "Content-Length:", 15))
+        if (!ml_strncasecmp(line, "Content-Length:", 15))
             content_length = strtol(line + 15, NULL, 10);
-        else if (!strncasecmp(line, "Transfer-Encoding:", 18) && strstr(line, "chunked"))
+        else if (!ml_strncasecmp(line, "Transfer-Encoding:", 18) && strstr(line, "chunked"))
             chunked = 1;
     }
 

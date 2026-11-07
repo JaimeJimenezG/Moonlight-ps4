@@ -1,17 +1,22 @@
 # Toolchain file for cross-compiling to PS4 with OpenOrbis.
 # Based on bucanero/SDL-PS4's openorbis.cmake, adapted for the official
-# v0.5.4 release (host packaging tools in bin/linux, system clang).
+# v0.5.4 release (host packaging tools under bin/<host-os>, system clang).
 #
 # Usage: cmake -B build-ps4 -DCMAKE_TOOLCHAIN_FILE=cmake/openorbis.cmake
+# Paths: OO_PS4_TOOLCHAIN, else OO_PS4_TOOLCHAIN_SRC on Windows (same SDK root)
 
 cmake_minimum_required(VERSION 3.16)
 
 if (DEFINED ENV{OO_PS4_TOOLCHAIN})
     set(OPENORBIS $ENV{OO_PS4_TOOLCHAIN})
+elseif (CMAKE_HOST_WIN32 AND DEFINED ENV{OO_PS4_TOOLCHAIN_SRC}
+        AND EXISTS "$ENV{OO_PS4_TOOLCHAIN_SRC}/link.x")
+    # OO_PS4_TOOLCHAIN_SRC=C:\OpenOrbis\PS4Toolchain
+    set(OPENORBIS "$ENV{OO_PS4_TOOLCHAIN_SRC}")
 elseif (EXISTS "$ENV{HOME}/ps4dev/OpenOrbis/PS4Toolchain")
     set(OPENORBIS "$ENV{HOME}/ps4dev/OpenOrbis/PS4Toolchain")
 else ()
-    message(FATAL_ERROR "Set OO_PS4_TOOLCHAIN to the OpenOrbis SDK path")
+    message(FATAL_ERROR "Set OO_PS4_TOOLCHAIN to the OpenOrbis SDK path, (on Windows, OO_PS4_TOOLCHAIN_SRC is also honoured)")
 endif ()
 set(OO_PS4_TOOLCHAIN ${OPENORBIS})
 
@@ -22,14 +27,48 @@ set(CMAKE_SYSTEM_PROCESSOR x86_64)
 set(CMAKE_SYSTEM_VERSION 12)
 set(CMAKE_CROSSCOMPILING 1)
 
-# System clang/lld; packaging tools live in bin/linux.
-set(CMAKE_ASM_COMPILER clang CACHE PATH "")
-set(CMAKE_C_COMPILER clang CACHE PATH "")
-set(CMAKE_CXX_COMPILER clang++ CACHE PATH "")
-set(CMAKE_LINKER ld.lld CACHE PATH "")
-set(CMAKE_AR llvm-ar CACHE PATH "")
-set(CMAKE_RANLIB llvm-ranlib CACHE PATH "")
-set(OO_HOST_TOOLS ${OPENORBIS}/bin/linux)
+# System clang/lld; packaging tools live under a per-host subdir.
+if (CMAKE_HOST_WIN32)
+    set(OO_HOST_TOOLS ${OPENORBIS}/bin/windows)
+    set(OO_EXE_SUFFIX ".exe")
+elseif (APPLE)
+    set(OO_HOST_TOOLS ${OPENORBIS}/bin/macos)
+    set(OO_EXE_SUFFIX "")
+else ()
+    set(OO_HOST_TOOLS ${OPENORBIS}/bin/linux)
+    set(OO_EXE_SUFFIX "")
+endif ()
+
+set(_OO_LLVM_HINTS "")
+if (CMAKE_HOST_WIN32)
+    list(APPEND _OO_LLVM_HINTS "C:/Program Files/LLVM/bin" "C:/Program Files (x86)/LLVM/bin")
+endif ()
+
+find_program(CMAKE_C_COMPILER NAMES clang PATHS ${_OO_LLVM_HINTS} NO_DEFAULT_PATH)
+if (NOT CMAKE_C_COMPILER)
+    find_program(CMAKE_C_COMPILER NAMES clang REQUIRED)
+endif ()
+find_program(CMAKE_CXX_COMPILER NAMES clang++ PATHS ${_OO_LLVM_HINTS} NO_DEFAULT_PATH)
+if (NOT CMAKE_CXX_COMPILER)
+    find_program(CMAKE_CXX_COMPILER NAMES clang++ REQUIRED)
+endif ()
+find_program(CMAKE_ASM_COMPILER NAMES clang PATHS ${_OO_LLVM_HINTS} NO_DEFAULT_PATH)
+if (NOT CMAKE_ASM_COMPILER)
+    find_program(CMAKE_ASM_COMPILER NAMES clang REQUIRED)
+endif ()
+find_program(CMAKE_LINKER NAMES ld.lld PATHS ${_OO_LLVM_HINTS} NO_DEFAULT_PATH)
+if (NOT CMAKE_LINKER)
+    find_program(CMAKE_LINKER NAMES ld.lld REQUIRED)
+endif ()
+find_program(CMAKE_AR NAMES llvm-ar PATHS ${_OO_LLVM_HINTS} NO_DEFAULT_PATH)
+if (NOT CMAKE_AR)
+    find_program(CMAKE_AR NAMES llvm-ar REQUIRED)
+endif ()
+find_program(CMAKE_RANLIB NAMES llvm-ranlib PATHS ${_OO_LLVM_HINTS} NO_DEFAULT_PATH)
+if (NOT CMAKE_RANLIB)
+    find_program(CMAKE_RANLIB NAMES llvm-ranlib REQUIRED)
+endif ()
+unset(_OO_LLVM_HINTS)
 
 set(CMAKE_FIND_ROOT_PATH ${OPENORBIS} ${OPENORBIS}/usr)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

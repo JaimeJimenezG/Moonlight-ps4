@@ -4,11 +4,11 @@
 #
 # Workflow:
 #   1. Edit files under third_party/moonlight-common-c (or enet)
-#   2. scripts/refresh_patches.sh
+#   2. scripts/linux/refresh_patches.sh
 #   3. Commit the updated files under patches/ (not the submodule dirt)
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DEPS_FILE="$REPO_DIR/third_party/DEPS"
 PATCH_DIR="$REPO_DIR/patches"
 

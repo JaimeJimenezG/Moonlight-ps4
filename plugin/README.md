@@ -68,7 +68,7 @@ Full validation procedure:
 
 3. GoldHEN → **Enable plugins**
 4. The Moonlight pkg must be **`CATEGORY=gd`** (game). With `gde` (MiniApp)
-   GoldHEN does **not** inject plugins. `scripts/make_pkg.sh` already uses `gd`.
+   GoldHEN does **not** inject plugins. `scripts/linux/make_pkg.sh` already uses `gd`.
 5. After every reboot: `nc -w 3 <PS4_IP> 9090 < plugin/bin/ycbcr_kpatch_900.bin`
    (notification `ycbcr_kpatch OK`). **Panic risk** if pattern/offset is wrong;
    the patch does not survive reboot.

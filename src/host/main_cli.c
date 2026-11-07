@@ -12,7 +12,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  define _WINSOCK_DEPRECATED_NO_WARNINGS
+#  include <winsock2.h>
+#  include <windows.h>
+#  define ml_strcasecmp _stricmp
+#else
+#  include <unistd.h>
+#  define ml_strcasecmp strcasecmp
+#endif
 #include <time.h>
 
 #include <Limelight.h>
@@ -94,8 +105,17 @@ static void cl_log(const char *format, ...) {
 
 static const char *config_dir(void) {
     static char dir[512];
+#if defined(_WIN32)
+    const char *local_app_data = getenv("LOCALAPPDATA");
+    if (!local_app_data || !local_app_data[0])
+        local_app_data = getenv("APPDATA");
+    if (!local_app_data || !local_app_data[0])
+        local_app_data = getenv("USERPROFILE");
+    snprintf(dir, sizeof(dir), "%s/moonlight-ps4", local_app_data ? local_app_data : ".");
+#else
     const char *home = getenv("HOME");
     snprintf(dir, sizeof(dir), "%s/.config/moonlight-ps4", home ? home : ".");
+#endif
     return dir;
 }
 
@@ -206,7 +226,7 @@ static int cmd_stream(const char *host, int argc, char **argv) {
             return 1;
         }
         for (app_entry_t *a = list; a; a = a->next) {
-            if (!strcasecmp(a->name, app_name)) {
+            if (!ml_strcasecmp(a->name, app_name)) {
                 app_id = a->id;
                 break;
             }
@@ -274,7 +294,11 @@ static int cmd_stream(const char *host, int argc, char **argv) {
     LOGI("streaming active; dumping video to %s", out_path);
     int last_frames = 0;
     for (int t = 0; t < seconds; t++) {
+#if defined(_WIN32)
+        Sleep(1000);
+#else
         sleep(1);
+#endif
         LOGI("  t=%2ds  frames=%d (+%d)  IDR=%d  video=%.1f MB  audio=%lld packets",
              t + 1, g_video_frames, g_video_frames - last_frames, g_idr_frames,
              g_video_bytes / 1048576.0, g_audio_samples);
@@ -305,6 +329,16 @@ static void usage(void) {
 }
 
 int main(int argc, char **argv) {
+#if defined(_WIN32)
+    {
+        WSADATA wsa;
+        // mbedTLS, moonlight-common-c and ENet need winsock initialised once
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            fprintf(stderr, "WSAStartup failed\n");
+            return 2;
+        }
+    }
+#endif
     log_init(NULL, 0);
 
     if (argc < 3) {

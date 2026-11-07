@@ -3,9 +3,9 @@
 # Output: ~/ps4dev/ffmpeg-ps4/{lib,include}
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck disable=SC1091
-source "$ROOT/scripts/env.sh"
+source "$ROOT/scripts/linux/env.sh"
 
 OO="$OO_PS4_TOOLCHAIN"
 SRC_DIR="${FFMPEG_SRC_DIR:-$HOME/ps4dev/src}"
@@ -23,7 +23,7 @@ fi
 cd "FFmpeg-$VER"
 
 # ld.lld wrapper (clang -fuse-ld looks for crtbegin/libgcc that OpenOrbis lacks)
-install -m 755 "$ROOT/scripts/ps4-ld.sh" /tmp/ps4-ld.sh
+install -m 755 "$ROOT/scripts/linux/ps4-ld.sh" /tmp/ps4-ld.sh
 
 ./configure \
   --prefix="$PREFIX" \

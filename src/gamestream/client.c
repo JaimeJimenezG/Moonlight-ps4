@@ -15,7 +15,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <arpa/inet.h>
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  define _WINSOCK_DEPRECATED_NO_WARNINGS
+#  include <winsock2.h>
+#else
+#  include <arpa/inet.h>
+#endif
 
 #define SIGNATURE_LEN 256
 #define MAX_PLAINCERT 8192
@@ -84,7 +92,14 @@ out:
 // ---------------------------------------------------------------------------
 
 // GET to the API; path is built with printf format.
-__attribute__((format(printf, 4, 5)))
+#if defined(_MSC_VER)
+#  define ML_API_GET_ATTR
+#elif defined(__clang__) || defined(__GNUC__)
+#  define ML_API_GET_ATTR __attribute__((format(printf, 4, 5)))
+#else
+#  define ML_API_GET_ATTR
+#endif
+ML_API_GET_ATTR
 static int api_get(gs_server_t *server, int https, http_resp_t *resp,
                    const char *fmt, ...) {
     char path[8192];

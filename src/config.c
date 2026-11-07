@@ -4,12 +4,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/stat.h>
+#if defined(_WIN32)
+#  include <direct.h>
+#else
+#  include <strings.h>
+#  include <sys/stat.h>
+#endif
 #include <errno.h>
 
 #ifdef __ORBIS__
 #include <orbis/libkernel.h>
+#endif
+
+#if defined(_WIN32)
+#  define ml_strcasecmp _stricmp
+#else
+#  define ml_strcasecmp strcasecmp
 #endif
 
 void config_set_defaults(app_config_t *cfg) {
@@ -52,7 +62,11 @@ void config_ensure_dir(const char *dir) {
     sceKernelMkdir("/data", 0777);
     sceKernelMkdir(dir, 0777);
 #else
+#  if defined(_WIN32)
+    _mkdir(dir);
+#  else
     mkdir(dir, 0755);
+#  endif
 #endif
     (void)errno;
 }
@@ -67,7 +81,7 @@ static char *trim(char *s) {
 }
 
 static int parse_bool(const char *v) {
-    return !strcasecmp(v, "true") || !strcmp(v, "1") || !strcasecmp(v, "yes");
+    return !ml_strcasecmp(v, "true") || !strcmp(v, "1") || !ml_strcasecmp(v, "yes");
 }
 
 int config_load(app_config_t *cfg, const char *dir) {

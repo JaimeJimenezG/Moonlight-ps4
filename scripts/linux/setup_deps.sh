@@ -5,11 +5,11 @@
 # third_party/DEPS and patches/ stay in sync.
 #
 # Usage:
-#   scripts/setup_deps.sh           # init/update to pins + apply patches
-#   scripts/setup_deps.sh --no-patch
+#   scripts/linux/setup_deps.sh       # init/update to pins + apply patches
+#   scripts/linux/setup_deps.sh --no-patch
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DEPS_FILE="$REPO_DIR/third_party/DEPS"
 APPLY_PATCHES=1
 
@@ -101,7 +101,7 @@ if git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 if [[ "$APPLY_PATCHES" -eq 1 ]]; then
-    "$REPO_DIR/scripts/apply_patches.sh"
+    "$REPO_DIR/scripts/linux/apply_patches.sh"
 else
     echo "setup_deps: skipped patches (--no-patch)"
 fi

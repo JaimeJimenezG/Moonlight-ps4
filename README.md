@@ -30,14 +30,23 @@ Full port plan and longer backlog: [PLAN.md](PLAN.md). Validation notes: [docs/C
 
 ## Requirements (development)
 
+### Linux
+
 - Linux x86_64 with `clang`, `ld.lld`, `cmake`, `ninja`, `git`, and `curl`
 - OpenOrbis toolchain v0.5.4 (default: `~/ps4dev/OpenOrbis/PS4Toolchain`)
-- Cross-built FFmpeg for PS4 (H.264 decoder only): `scripts/build_ffmpeg_ps4.sh`
+- Cross-built FFmpeg for PS4 (H.264 decoder only): `scripts/linux/build_ffmpeg_ps4.sh`
 - For `PkgTool.Core`: `libssl.so.1.1` / `libcrypto.so.1.1` in `~/ps4dev/hostlibs/usr/lib`
 - PS4 with GoldHEN-compatible firmware (plan validated on **9.00**)
 - Host PC running [Sunshine](https://github.com/LizardByte/Sunshine)
 
+### Windows
 
+- Windows 10/11 with [Visual Studio 2022](https://visualstudio.microsoft.com/vs/) (CMake and Ninja ship with it), [LLVM](https://releases.llvm.org/) (`clang` / `ld.lld` at `C:\Program Files\LLVM\bin`), [Git for Windows](https://git-scm.com/) (for Git Bash), and `curl`
+- [OpenOrbis](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain) installer. Set the `OO_PS4_TOOLCHAIN_SRC` machine/user env var to the SDK root (e.g. `C:\OpenOrbis\PS4Toolchain`) because that's the only path you need, `scripts\windows\env.bat` and `cmake\openorbis.cmake` read it, nothing is hardcoded. `OO_PS4_TOOLCHAIN` (or the Linux `~/ps4dev/...` fallback) works too and takes precedence.
+- Cross-built FFmpeg for PS4 (H.264 decoder only): `scripts/windows/build_ffmpeg_ps4.bat` (wraps `scripts/linux/build_ffmpeg_ps4.sh` under Git Bash "`%USERPROFILE%/ps4dev/ffmpeg-ps4`")
+- For `PkgTool.Core`, there's a file called `PkgTool.Core.exe` and needs the .NET runtime installed, no `PS4_HOSTLIBS` / `LD_LIBRARY_PATH` on Windows.
+- PS4 with GoldHEN-compatible firmware (plan validated on **9.00**)
+- Host PC running [Sunshine](https://github.com/LizardByte/Sunshine)
 
 ## Dependencies (third_party)
 
@@ -48,15 +57,16 @@ Orbis-specific fixes are **not** committed inside those repos; they live under
 
 ```bash
 git clone <this-repo>
-scripts/setup_deps.sh    # checkout pins from third_party/DEPS + apply patches/
+scripts/linux/setup_deps.sh    # checkout pins from third_party/DEPS + apply patches/
 ```
 
 Equivalent manual flow: `git submodule update --init --recursive` then
-`scripts/apply_patches.sh`. After patches, `third_party/*` working trees look
+`scripts/linux/apply_patches.sh`. After patches, `third_party/*` working trees look
 dirty — that is expected; commit patch files, not submodule dirt.
+On Windows use the `.bat` files under `scripts\windows\` instead.
 
 To bump a dependency on purpose: edit the pin in `third_party/DEPS`, update the
-submodule to that commit, refresh patches if needed (`scripts/refresh_patches.sh`),
+submodule to that commit, refresh patches if needed (`scripts/linux/refresh_patches.sh`),
 and commit the new gitlink + DEPS (+ patches).
 
 ## Build
@@ -64,12 +74,12 @@ and commit the new gitlink + DEPS (+ patches).
 ```bash
 git clone <this-repo>
 cd moonlight-ps4
-scripts/setup_deps.sh                # pinned third_party + Orbis patches
-scripts/build_ffmpeg_ps4.sh          # once (→ ~/ps4dev/ffmpeg-ps4)
+scripts/linux/setup_deps.sh                # pinned third_party + Orbis patches
+scripts/linux/build_ffmpeg_ps4.sh          # once (~/ps4dev/ffmpeg-ps4)
 
-# PS4 app + .pkg (sources env.sh, configures, builds, packages)
-scripts/build_pkg.sh
-# scripts/build_pkg.sh --clean       # wipe build-ps4/ and reconfigure
+# PS4 app + .pkg (sources scripts/linux/env.sh, configures, builds, packages)
+scripts/linux/build_pkg.sh
+# scripts/linux/build_pkg.sh --clean       # wipe build-ps4/ and reconfigure
 
 # Optional: Linux development CLI (pairing / H.264 dump)
 cmake -B build-host -G Ninja && cmake --build build-host
@@ -78,11 +88,42 @@ cmake -B build-host -G Ninja && cmake --build build-host
 Installable artifact: `build-ps4/Moonlight-1.1.0.pkg`
 (also `IV0000-MLNT00001_00-MOONLIGHTPS40000.pkg`).
 
-`build_pkg.sh` runs `source scripts/env.sh` itself. Manual CMake equivalent:
+`build_pkg.sh` runs `source scripts/linux/env.sh` itself. Manual CMake equivalent:
 
 ```bash
-source scripts/env.sh
+source scripts/linux/env.sh
 cmake -B build-ps4 -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/openorbis.cmake
+cmake --build build-ps4
+```
+
+### Windows
+
+`cmd`/`cmd.exe`. Every `.sh` in `scripts\linux\` has a `.bat` file with identical behavior in `scripts\windows\`. `scripts\windows\env.bat` and `cmake\openorbis.cmake` read the SDK path from `OO_PS4_TOOLCHAIN` or `OO_PS4_TOOLCHAIN_SRC` (the same SDK root) (again, no paths are hardcoded).
+
+```bat
+git clone <this-repo>
+cd moonlight-ps4
+set OO_PS4_TOOLCHAIN_SRC=C:\OpenOrbis\PS4Toolchain   REM or OO_PS4_TOOLCHAIN
+scripts\windows\setup_deps.bat   Rem pinned third_party + Orbis patches
+scripts\windows\build_ffmpeg_ps4.bat   Rem once -> %USERPROFILE%\ps4dev\ffmpeg-ps4 (via Git Bash + LLVM clang)
+
+scripts\windows\build_pkg.bat
+scripts\windows\build_pkg.bat --clean   Rem wipe build-ps4\ and reconfigure
+
+REM optional, host development cli (pairing / H.264 dump, MSVC)
+cmake -S . -B build-host-win -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-host-win --config Release
+build-host-win\Release\moonlight-cli.exe
+```
+
+Installable artifact: `build-ps4\Moonlight-1.1.0.pkg`.
+The Windows packaging uses the OpenOrbis tools under `bin\windows\*.exe`, `PkgTool.Core.exe` targets .NET Core 3.0, and `scripts\windows\env.bat` / `scripts\windows\make_pkg.bat` set `DOTNET_ROLL_FORWARD=LatestMajor` so it runs on your installed .NET instead of requiring the EOL 3.0 runtime.
+
+Manual CMake equivalent (PS4 target on Windows):
+
+```bat
+call scripts\windows\env.bat
+cmake -S . -B build-ps4 -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake\openorbis.cmake
 cmake --build build-ps4
 ```
 
@@ -126,7 +167,7 @@ Validation protocol: `[docs/CONSOLE_VALIDATE.md](docs/CONSOLE_VALIDATE.md)`.
 
 Isolated Videodec2 spike: `videodec2_spike = true` in the INI.
 
-## Host CLI (Linux)
+## Host CLI (Linux / Windows)
 
 ```bash
 ./build-host/moonlight-cli pair 192.168.1.100
@@ -135,6 +176,8 @@ Isolated Videodec2 spike: `videodec2_spike = true` in the INI.
 ./build-host/moonlight-cli quit 192.168.1.100
 ```
 
+On Windows the same binary is built by the `build-host-win` configure above (`build-host-win\Release\moonlight-cli.exe`) and stores its identity under `%LOCALAPPDATA%\moonlight-ps4` instead of `~/.config/moonlight-ps4`.
+
 
 
 ## Layout
@@ -142,7 +185,8 @@ Isolated Videodec2 spike: `videodec2_spike = true` in the INI.
 ```
 cmake/openorbis.cmake           CMake toolchain for PS4
 pkg/                            package assets (icon0, sce modules)
-scripts/                        env, cross FFmpeg, .pkg packaging
+scripts/linux/                  bash scripts (env.sh, build_pkg.sh, .pkg packaging)
+scripts/windows/                .bat files of the same steps
 src/
   main.c stream.c config.c      orchestration + INI config
   ui/                           on-console menu (APPS / SETTINGS + OSK)
@@ -155,7 +199,7 @@ src/
   gamestream/sps.c              SPS fixup (num_ref_frames=1)
   input/input_pad.c             DualShock 4
   orbis/                        VideoOut / Videodec2 / net helpers
-  host/main_cli.c               Linux development CLI
+  host/main_cli.c               Development CLI (Linux / Windows)
 plugin/
   ycbcr_unlock/                 GoldHEN PRX (1.63) for YCbCr VideoOut
   ycbcr_kpatch/                 FW 9.00 kernel kpayload (BinLoader)
@@ -167,8 +211,6 @@ third_party/
   mbedtls                     crypto (v3.6.4)
   opus                        audio
   h264bitstream               SPS rewrite
-patches/                      Orbis patches applied by scripts/apply_patches.sh
-scripts/setup_deps.sh         checkout pins + apply patches
-scripts/apply_patches.sh
-scripts/refresh_patches.sh    regenerate patches after local dep edits
+patches/                      Orbis patches applied by scripts/linux/apply_patches.sh (.bat in scripts/windows/)
+scripts/linux/                env.sh, setup_deps.sh, apply_patches.sh, refresh_patches.sh, .pkg packaging (.bat twins in scripts/windows/)
 ```

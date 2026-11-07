@@ -22,6 +22,9 @@ add_subdirectory(third_party/mbedtls EXCLUDE_FROM_ALL)
 set(USE_MBEDTLS ON CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF)
 add_subdirectory(third_party/moonlight-common-c EXCLUDE_FROM_ALL)
+if(MSVC)
+    target_compile_options(moonlight-common-c PRIVATE /wd4267)
+endif()
 
 set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
@@ -58,12 +61,24 @@ if(PS4)
 endif()
 
 if(PS4)
-    # Cross-built FFmpeg (see scripts/build_ffmpeg_ps4.sh)
-    set(FFMPEG_PS4_PREFIX "$ENV{HOME}/ps4dev/ffmpeg-ps4")
+    # Cross-built FFmpeg (see scripts/linux/build_ffmpeg_ps4.sh)
+    if(DEFINED FFMPEG_PS4_PREFIX AND NOT "${FFMPEG_PS4_PREFIX}" STREQUAL "")
+        set(_ML_FFMPEG_PS4_PREFIX "${FFMPEG_PS4_PREFIX}")
+    elseif(DEFINED ENV{FFMPEG_PS4_PREFIX})
+        set(_ML_FFMPEG_PS4_PREFIX "$ENV{FFMPEG_PS4_PREFIX}")
+    elseif(DEFINED ENV{HOME})
+        set(_ML_FFMPEG_PS4_PREFIX "$ENV{HOME}/ps4dev/ffmpeg-ps4")
+    elseif(DEFINED ENV{USERPROFILE})
+        set(_ML_FFMPEG_PS4_PREFIX "$ENV{USERPROFILE}/ps4dev/ffmpeg-ps4")
+    else()
+        set(_ML_FFMPEG_PS4_PREFIX "")
+    endif()
+    set(FFMPEG_PS4_PREFIX "${_ML_FFMPEG_PS4_PREFIX}" CACHE PATH "PS4 FFmpeg prefix")
+    unset(_ML_FFMPEG_PS4_PREFIX)
     if(NOT EXISTS "${FFMPEG_PS4_PREFIX}/lib/libavcodec.a")
         message(FATAL_ERROR
             "PS4 FFmpeg not found at ${FFMPEG_PS4_PREFIX}. "
-            "Run: scripts/build_ffmpeg_ps4.sh")
+            "Run: scripts/linux/build_ffmpeg_ps4.sh (Linux) or scripts/windows/build_ffmpeg_ps4.bat (Windows)")
     endif()
 
     add_executable(moonlight-ps4.elf
@@ -111,7 +126,7 @@ if(PS4)
 
     add_custom_command(
         OUTPUT ${CMAKE_BINARY_DIR}/eboot.bin
-        COMMAND ${OO_HOST_TOOLS}/create-fself
+        COMMAND ${OO_HOST_TOOLS}/create-fself${OO_EXE_SUFFIX}
                 -in=$<TARGET_FILE:moonlight-ps4.elf>
                 -out=${CMAKE_BINARY_DIR}/moonlight-ps4.oelf
                 --eboot ${CMAKE_BINARY_DIR}/eboot.bin
@@ -121,18 +136,34 @@ if(PS4)
         VERBATIM
     )
 
-    add_custom_target(pkg ALL
-        COMMAND ${CMAKE_COMMAND} -E env OO_PS4_TOOLCHAIN=${OO_PS4_TOOLCHAIN}
-                ${CMAKE_SOURCE_DIR}/scripts/make_pkg.sh
-                ${CMAKE_BINARY_DIR}/eboot.bin ${CMAKE_BINARY_DIR}
-        DEPENDS ${CMAKE_BINARY_DIR}/eboot.bin
-        COMMENT "Packaging .pkg"
-        VERBATIM
-    )
+    if(CMAKE_HOST_WIN32)
+        add_custom_target(pkg ALL
+            COMMAND ${CMAKE_COMMAND} -E env OO_PS4_TOOLCHAIN=${OO_PS4_TOOLCHAIN}
+                    cmd.exe /c
+                    ${CMAKE_SOURCE_DIR}/scripts/windows/make_pkg.bat
+                    ${CMAKE_BINARY_DIR}/eboot.bin ${CMAKE_BINARY_DIR}
+            DEPENDS ${CMAKE_BINARY_DIR}/eboot.bin
+            COMMENT "Packaging .pkg"
+            VERBATIM
+        )
+    else()
+        add_custom_target(pkg ALL
+            COMMAND ${CMAKE_COMMAND} -E env OO_PS4_TOOLCHAIN=${OO_PS4_TOOLCHAIN}
+                    ${CMAKE_SOURCE_DIR}/scripts/linux/make_pkg.sh
+                    ${CMAKE_BINARY_DIR}/eboot.bin ${CMAKE_BINARY_DIR}
+            DEPENDS ${CMAKE_BINARY_DIR}/eboot.bin
+            COMMENT "Packaging .pkg"
+            VERBATIM
+        )
+    endif()
 else()
-    # Linux development CLI (pairing / video dump)
-    find_package(PkgConfig)
-    pkg_check_modules(HOST_FFMPEG IMPORTED_TARGET libavcodec libavutil)
+    # Host development CLI (pairing / video dump): Linux, Windows, macOS.
+    if(NOT CMAKE_HOST_WIN32)
+        find_package(PkgConfig QUIET)
+        if(PKG_CONFIG_FOUND)
+            pkg_check_modules(HOST_FFMPEG IMPORTED_TARGET libavcodec libavutil)
+        endif()
+    endif()
 
     add_executable(moonlight-cli
         src/host/main_cli.c
@@ -140,13 +171,25 @@ else()
         ${GAMESTREAM_SOURCES}
     )
     target_include_directories(moonlight-cli PRIVATE src third_party/h264bitstream)
-    target_link_libraries(moonlight-cli PRIVATE
-        moonlight-common-c
-        enet
-        mbedtls mbedx509 mbedcrypto
-        opus
-        h264bitstream
-        pthread
-        m
-    )
+    if(CMAKE_HOST_WIN32)
+        target_link_libraries(moonlight-cli PRIVATE
+            moonlight-common-c
+            enet
+            mbedtls mbedx509 mbedcrypto
+            opus
+            h264bitstream
+            ws2_32
+            winmm
+        )
+    else()
+        target_link_libraries(moonlight-cli PRIVATE
+            moonlight-common-c
+            enet
+            mbedtls mbedx509 mbedcrypto
+            opus
+            h264bitstream
+            pthread
+            m
+        )
+    endif()
 endif()

@@ -106,7 +106,7 @@ moonlight-ps4/
  CMakeLists.txt                CMake with OpenOrbis toolchain and native Linux target
  cmake/openorbis.cmake         toolchain file (based on bucanero/SDL-PS4)
  third_party/
-   DEPS                         pinned SHAs/tags (see scripts/setup_deps.sh)
+   DEPS                         pinned SHAs/tags (see scripts/linux/setup_deps.sh)
    moonlight-common-c/         upstream submodule (+ patches/)
    mbedtls/ opus/ h264bitstream/
  src/
@@ -124,7 +124,7 @@ moonlight-ps4/
  pkg/     sce_sys/  sce_module/  assets/misc/moonlight.ini
  plugin/  ycbcr_unlock / ycbcr_kpatch   YCbCr path helpers
  patches/ Orbis patches for moonlight-common-c / enet
- scripts/ setup_deps.sh apply_patches.sh refresh_patches.sh …
+ scripts/linux/*.sh scripts/windows/*.bat …
 ```
 
 
