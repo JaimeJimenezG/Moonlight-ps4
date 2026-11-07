@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Development environment for moonlight-ps4. Load with: source scripts/env.sh
+# Development environment for moonlight-ps4. Load with: source scripts/linux/env.sh
 
 export OO_PS4_TOOLCHAIN="${OO_PS4_TOOLCHAIN:-$HOME/ps4dev/OpenOrbis/PS4Toolchain}"
 

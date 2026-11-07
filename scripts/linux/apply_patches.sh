@@ -3,7 +3,7 @@
 # Safe to re-run: skips a patch if it is already applied.
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 PATCH_DIR="$REPO_DIR/patches"
 
 apply_one() {
@@ -12,7 +12,7 @@ apply_one() {
     local label="$3"
 
     if [[ ! -d "$tree" ]]; then
-        echo "apply_patches: missing $tree (run scripts/setup_deps.sh first)" >&2
+        echo "apply_patches: missing $tree (run scripts/linux/setup_deps.sh first)" >&2
         return 1
     fi
     if [[ ! -f "$patch" ]]; then

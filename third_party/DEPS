@@ -2,11 +2,11 @@
 # Format: name | path | url | pin (tag or commit SHA) | notes
 #
 # The parent git repo records submodule SHAs (gitlinks). This file is the
-# human-readable lockfile used by scripts/setup_deps.sh. Update both when
+# human-readable lockfile used by scripts/linux/setup_deps.sh. Update both when
 # bumping a dependency intentionally.
 #
 # Do NOT commit local edits inside third_party/* — keep them as patches/
-# and re-apply via scripts/apply_patches.sh after every clean checkout.
+# and re-apply via scripts/linux/apply_patches.sh after every clean checkout.
 
 # name                 path                                      url                                                      pin
 moonlight-common-c     third_party/moonlight-common-c            https://github.com/moonlight-stream/moonlight-common-c.git  e41355ea01670fd4c830b384009d31dd0339a705

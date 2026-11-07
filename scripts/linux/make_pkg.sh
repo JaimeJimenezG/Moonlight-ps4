@@ -6,7 +6,7 @@ set -euo pipefail
 EBOOT="$1"
 OUTDIR="$2"
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TOOLS="$OO_PS4_TOOLCHAIN/bin/linux"
 
 TITLE="Moonlight PS4"

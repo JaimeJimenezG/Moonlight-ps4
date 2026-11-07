@@ -1,7 +1,7 @@
 # Patches applied on top of pinned third_party checkouts
 #
-# After `scripts/setup_deps.sh` (or a clean submodule checkout), run
-# `scripts/apply_patches.sh`. Working trees under third_party/ will look
+# After `scripts/linux/setup_deps.sh` (or a clean submodule checkout), run
+# `scripts/linux/apply_patches.sh`. Working trees under third_party/ will look
 # dirty — that is expected; do not commit those changes into the submodules.
 #
 # | Patch | Target | Purpose |
@@ -10,4 +10,4 @@
 # | `moonlight-common-c-enet-orbis.patch` | `…/enet` @ aca8784 | Same BSD/`ss_family` layout fix inside ENet (`ENET_SS_FAMILY`) |
 #
 # Regenerate after intentional edits:
-#   scripts/refresh_patches.sh
+#   scripts/linux/refresh_patches.sh
